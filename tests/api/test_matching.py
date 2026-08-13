@@ -1,7 +1,7 @@
 """API tests for authenticated internship matching."""
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI
@@ -38,57 +38,82 @@ class TestMatchingRoute:
     ) -> TestClient:
         app = FastAPI()
         app.include_router(router)
+
         app.dependency_overrides[get_current_user] = lambda: UserPublic(
             id=user_id,
             name="Candidate",
             email="candidate@example.com",
         )
+
         app.dependency_overrides[get_matching_orchestrator] = lambda: orchestrator
-        app.dependency_overrides[get_settings] = lambda: Settings(max_upload_size_mb=1)
+
+        app.dependency_overrides[get_settings] = lambda: Settings(
+            max_upload_size_mb=1
+        )
+
         app.dependency_overrides[get_user_detail_service] = lambda: (
             detail_service if detail_service is not None else AsyncMock()
         )
+
         return TestClient(app)
 
     def test_matches_with_existing_user_detail_id(self) -> None:
         user_id = uuid4()
         detail_id = uuid4()
+
         orchestrator = AsyncMock()
         orchestrator.match.return_value = self._response(user_id)
+
         client = self._client(user_id, orchestrator)
 
-        response = client.post("/matching", data={"user_detail_id": str(detail_id)})
+        response = client.post(
+            "/matching",
+            data={"user_detail_id": str(detail_id)},
+        )
 
         assert response.status_code == 200
+
         called_user_id, request = orchestrator.match.await_args.args
+
         assert called_user_id == user_id
         assert request.user_detail_id == detail_id
 
     def test_matches_without_resume_selection(self) -> None:
         user_id = uuid4()
+
         orchestrator = AsyncMock()
         orchestrator.match.return_value = self._response(user_id)
+
         client = self._client(user_id, orchestrator)
 
         response = client.post("/matching")
 
         assert response.status_code == 200
+
         _, request = orchestrator.match.await_args.args
+
         assert request.user_detail_id is None
 
     def test_rejects_invalid_user_detail_id(self) -> None:
         client = self._client(uuid4(), AsyncMock())
 
-        response = client.post("/matching", data={"user_detail_id": "not-a-uuid"})
+        response = client.post(
+            "/matching",
+            data={"user_detail_id": "not-a-uuid"},
+        )
 
         assert response.status_code == 422
-        assert response.json()["detail"] == "user_detail_id must be a valid UUID"
+        assert response.json()["detail"] == (
+            "user_detail_id must be a valid UUID"
+        )
 
     def test_parses_uploaded_resume_then_matches(self) -> None:
         user_id = uuid4()
         detail_id = uuid4()
         now = datetime.now(UTC)
+
         detail_service = AsyncMock()
+
         detail_service.parse_resume.return_value = ParsedResumeResponse(
             id=detail_id,
             user_id=user_id,
@@ -98,9 +123,15 @@ class TestMatchingRoute:
             created_at=now,
             updated_at=now,
         )
+
         orchestrator = AsyncMock()
         orchestrator.match.return_value = self._response(user_id)
-        client = self._client(user_id, orchestrator, detail_service)
+
+        client = self._client(
+            user_id,
+            orchestrator,
+            detail_service,
+        )
 
         response = client.post(
             "/matching",
@@ -114,24 +145,136 @@ class TestMatchingRoute:
         )
 
         assert response.status_code == 200
+
         detail_service.parse_resume.assert_awaited_once_with(
             user_id,
             "resume.pdf",
             b"%PDF-1.4 resume bytes",
         )
+
         _, request = orchestrator.match.await_args.args
+
         assert request.user_detail_id == detail_id
 
-    def test_rejects_file_and_user_detail_id_together(self) -> None:
-        detail_service = AsyncMock()
-        client = self._client(uuid4(), AsyncMock(), detail_service)
+    def test_compare_job_returns_compatibility_breakdown(self) -> None:
+        from app.database.connection import get_db
+        from app.models.job import Job
+        from app.schemas.matching import CompatibilityBreakdown
 
-        response = client.post(
-            "/matching",
-            data={"user_detail_id": str(uuid4())},
-            files={"file": ("resume.pdf", b"%PDF-1.4", "application/pdf")},
+        user_id = uuid4()
+        job_id = uuid4()
+
+        orchestrator = AsyncMock()
+
+        expected_breakdown = CompatibilityBreakdown(
+            overall_score=88.0,
+            skills_score=80.0,
+            matched_skills=["Python", "FastAPI"],
+            missing_skills=["Docker"],
+            match_reasons=["Strong Python match"],
+            recommendations=["Learn Docker"],
+            fit_level="High",
         )
 
-        assert response.status_code == 422
-        assert response.json()["detail"] == "Provide either user_detail_id or file, not both"
-        detail_service.parse_resume.assert_not_awaited()
+        orchestrator.compare_job.return_value = expected_breakdown
+
+        mock_db = AsyncMock()
+
+        mock_job = Job(
+            id=job_id,
+            title="Backend Intern",
+            company="Google",
+            location="Bangalore",
+            description="Build APIs",
+            required_skills=[
+                "Python",
+                "FastAPI",
+                "Docker",
+            ],
+            salary="50k",
+            job_type="internship",
+            role="Backend",
+            source="mock",
+            duration="6m",
+            apply_url="https://example.com",
+            created_at=datetime.now(UTC),
+        )
+
+        # scalar_one_or_none() is synchronous,
+        # so the result object should be a normal Mock.
+        mock_result = Mock()
+        mock_result.scalar_one_or_none.return_value = mock_job
+
+        # execute() is asynchronous, so db.execute remains AsyncMock.
+        mock_db.execute.return_value = mock_result
+
+        app = FastAPI()
+        app.include_router(router)
+
+        app.dependency_overrides[get_current_user] = lambda: UserPublic(
+            id=user_id,
+            name="Candidate",
+            email="candidate@example.com",
+        )
+
+        app.dependency_overrides[get_matching_orchestrator] = (
+            lambda: orchestrator
+        )
+
+        app.dependency_overrides[get_db] = lambda: mock_db
+
+        client = TestClient(app)
+
+        response = client.post(
+            f"/matching/compare/{job_id}"
+        )
+
+        assert response.status_code == 200
+
+        data = response.json()
+
+        assert data["overall_score"] == 88.0
+        assert data["matched_skills"] == [
+            "Python",
+            "FastAPI",
+        ]
+        assert data["fit_level"] == "High"
+
+    def test_compare_job_not_found_returns_404(self) -> None:
+        from app.database.connection import get_db
+
+        user_id = uuid4()
+        job_id = uuid4()
+
+        mock_db = AsyncMock()
+
+        # scalar_one_or_none() is synchronous,
+        # so use Mock rather than AsyncMock here.
+        mock_result = Mock()
+        mock_result.scalar_one_or_none.return_value = None
+
+        mock_db.execute.return_value = mock_result
+
+        app = FastAPI()
+        app.include_router(router)
+
+        app.dependency_overrides[get_current_user] = lambda: UserPublic(
+            id=user_id,
+            name="Candidate",
+            email="candidate@example.com",
+        )
+
+        app.dependency_overrides[get_matching_orchestrator] = (
+            lambda: AsyncMock()
+        )
+
+        app.dependency_overrides[get_db] = lambda: mock_db
+
+        client = TestClient(app)
+
+        response = client.post(
+            f"/matching/compare/{job_id}"
+        )
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"]

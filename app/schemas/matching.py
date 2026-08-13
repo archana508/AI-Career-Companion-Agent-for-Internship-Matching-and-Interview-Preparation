@@ -40,12 +40,33 @@ class MatchCitation(BaseModel):
     vector_document_id: str
 
 
+class CompatibilityBreakdown(BaseModel):
+    """Detailed match analysis and multi-factor scoring."""
+
+    overall_score: float = Field(
+        ge=0.0,
+        le=100.0,
+        description="Overall compatibility percentage (0-100%)",
+    )
+    skills_score: float = Field(
+        ge=0.0,
+        le=100.0,
+        description="Skill overlap percentage (0-100%)",
+    )
+    matched_skills: list[str] = Field(default_factory=list)
+    missing_skills: list[str] = Field(default_factory=list)
+    match_reasons: list[str] = Field(default_factory=list)
+    recommendations: list[str] = Field(default_factory=list)
+    fit_level: str = "Medium"  # "High", "Medium", "Low"
+
+
 class JobMatch(BaseModel):
-    """Ranked internship result with retrieval score and citation."""
+    """Ranked internship result with retrieval score, citation, and compatibility breakdown."""
 
     score: float
     job: InternshipJob | None
     citation: MatchCitation
+    compatibility: CompatibilityBreakdown | None = None
 
 
 class MatchingResponse(BaseModel):

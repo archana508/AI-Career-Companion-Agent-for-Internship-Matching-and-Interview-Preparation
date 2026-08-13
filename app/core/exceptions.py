@@ -17,6 +17,14 @@ class UnauthorizedError(AuthError):
     """Raised when an access token is missing or invalid."""
 
 
+class LLMError(RuntimeError):
+    """Base error for LLM operations."""
+
+
+class LLMGenerationError(LLMError):
+    """Raised when text generation or chat completion fails."""
+
+
 class DocumentError(RuntimeError):
     """Base error for uploaded-document processing."""
 

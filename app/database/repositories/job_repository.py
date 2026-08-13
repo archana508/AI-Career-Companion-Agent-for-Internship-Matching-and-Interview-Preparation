@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,12 @@ class JobRepository:
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def get_by_id(self, job_id: UUID) -> Job | None:
+        """Fetch a job by its primary key."""
+        stmt = select(Job).where(Job.id == job_id)
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def list_all(self) -> list[Job]:
         """Return all stored jobs ordered by newest first."""

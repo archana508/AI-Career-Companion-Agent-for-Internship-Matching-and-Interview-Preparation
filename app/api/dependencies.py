@@ -3,6 +3,7 @@
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.compatibility_agent import CompatibilityAgent
 from app.agents.cover_letter_agent import CoverLetterAgent
 from app.agents.job_retrieval_agent import JobRetrievalAgent
 from app.agents.orchestrator import MatchingOrchestrator
@@ -11,12 +12,27 @@ from app.core.config import Settings, get_settings
 from app.database.connection import get_db
 from app.database.repositories.user_detail_repository import UserDetailRepository
 from app.database.repositories.user_repository import UserRepository
-from app.llm.client import OllamaStructuredExtractionClient
+from app.llm.client import OllamaLLMClient, OllamaStructuredExtractionClient
 from app.rag.retriever import InternshipRetriever
 from app.services.job_scrape_service import JobScrapeService
 from app.services.profile_service import ProfileService
 from app.services.user_detail_service import UserDetailService
 from app.utils.file_utils import DocumentFileService
+
+
+def get_llm_client(settings: Settings = Depends(get_settings)) -> OllamaLLMClient:
+    """Provide an Ollama LLM client for chat, completion, and extraction."""
+    return OllamaLLMClient(
+        model=settings.ollama_chat_model,
+        base_url=settings.ollama_base_url,
+    )
+
+
+def get_compatibility_agent(
+    llm_client: OllamaLLMClient = Depends(get_llm_client),
+) -> CompatibilityAgent:
+    """Provide a CompatibilityAgent instance."""
+    return CompatibilityAgent(llm_client)
 
 
 def get_user_detail_service(
@@ -46,12 +62,14 @@ def get_profile_service(db: AsyncSession = Depends(get_db)) -> ProfileService:
 
 def get_matching_orchestrator(
     db: AsyncSession = Depends(get_db),
+    compatibility_agent: CompatibilityAgent = Depends(get_compatibility_agent),
 ) -> MatchingOrchestrator:
     """Provide the multi-agent matching orchestrator."""
     return MatchingOrchestrator(
         user_repository=UserRepository(db),
         detail_repository=UserDetailRepository(db),
         retrieval_agent=JobRetrievalAgent(InternshipRetriever()),
+        compatibility_agent=compatibility_agent,
     )
 
 
