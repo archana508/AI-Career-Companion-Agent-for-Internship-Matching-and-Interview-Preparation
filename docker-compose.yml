@@ -8,11 +8,6 @@ services:
       - chroma-data:/data
       - ./docker/chroma-config.yaml:/config.yaml:ro
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
 volumes:
   chroma-data:
