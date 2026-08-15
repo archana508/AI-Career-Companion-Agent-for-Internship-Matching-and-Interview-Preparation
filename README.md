@@ -148,6 +148,63 @@ Optional one-off RAG ingestion (also covered by `POST /jobs/scrape`):
 uv run python -m app.rag.ingestion
 ```
 
+## Frontend
+
+The project includes a React-based frontend built with Vite that provides the user interface for the AI Career Companion application.
+
+### Frontend Features
+
+- User Signup and Login
+- Career Profile Management
+- Internship Matching
+- Skill Gap Analysis
+- Resume Upload and Analysis
+- Technical Interview Preparation
+- Machine Learning Interview Preparation
+- Behavioral Interview Preparation
+- Oral Interview Practice using microphone/speech recognition
+- Navigation between career assistance features
+
+### Frontend Technologies
+
+- React.js
+- Vite
+- JavaScript
+- HTML5
+- CSS3
+
+### Run the Frontend
+
+Open a new terminal and navigate to the frontend directory:
+
+```powershell
+cd frontend
+```
+
+Install dependencies:
+
+```powershell
+npm.cmd install
+```
+
+Start the frontend development server:
+
+```powershell
+npm.cmd run dev
+```
+
+The frontend will normally run at:
+
+```text
+http://localhost:5173
+```
+
+The frontend communicates with the FastAPI backend running at:
+
+```text
+http://127.0.0.1:8000
+```
+
 ## Run the application
 
 ```powershell
