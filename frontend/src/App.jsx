@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
 const API = 'http://localhost:8000'
@@ -23,6 +23,16 @@ function App() {
   const [interviewIndex, setInterviewIndex] = useState(0)
 
   // ==========================================
+  // ORAL INTERVIEW / MICROPHONE
+  // ==========================================
+
+  const [isListening, setIsListening] = useState(false)
+  const [spokenAnswer, setSpokenAnswer] = useState('')
+  const [speechSupported, setSpeechSupported] = useState(true)
+
+  const recognitionRef = useRef(null)
+
+  // ==========================================
   // SKILLS
   // ==========================================
 
@@ -45,6 +55,34 @@ function App() {
     }
   }
 
+  const getErrorMessage = (data) => {
+    if (!data) {
+      return 'Unknown error'
+    }
+
+    if (typeof data.detail === 'string') {
+      return data.detail
+    }
+
+    if (typeof data.detail === 'object') {
+      try {
+        return JSON.stringify(data.detail)
+      } catch {
+        return 'Backend returned an error object'
+      }
+    }
+
+    if (typeof data.message === 'string') {
+      return data.message
+    }
+
+    try {
+      return JSON.stringify(data)
+    } catch {
+      return 'Unknown error'
+    }
+  }
+
   // ==========================================
   // NAVIGATION
   // ==========================================
@@ -55,7 +93,7 @@ function App() {
   }
 
   // ==========================================
-  // CHECK EXISTING LOGIN SESSION
+  // CHECK LOGIN SESSION
   // ==========================================
 
   useEffect(() => {
@@ -89,7 +127,7 @@ function App() {
             setSkills(user.skills.join(', '))
           }
         }
-      } catch (error) {
+      } catch {
         console.log('No active login session.')
         setLoggedIn(false)
       }
@@ -97,6 +135,165 @@ function App() {
 
     checkSession()
   }, [])
+
+  // ==========================================
+  // SPEECH RECOGNITION SETUP
+  // ==========================================
+
+  useEffect(() => {
+    const SpeechRecognition =
+      window.SpeechRecognition ||
+      window.webkitSpeechRecognition
+
+    if (!SpeechRecognition) {
+      setSpeechSupported(false)
+      return
+    }
+
+    const recognition = new SpeechRecognition()
+
+    recognition.continuous = true
+    recognition.interimResults = true
+    recognition.lang = 'en-US'
+
+    recognition.onstart = () => {
+      setIsListening(true)
+      setMessage('🎤 Listening... Speak your answer.')
+    }
+
+    recognition.onresult = (event) => {
+      let finalTranscript = ''
+      let interimTranscript = ''
+
+      for (
+        let i = event.resultIndex;
+        i < event.results.length;
+        i++
+      ) {
+        const transcript =
+          event.results[i][0].transcript
+
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript + ' '
+        } else {
+          interimTranscript += transcript
+        }
+      }
+
+      if (finalTranscript) {
+        setSpokenAnswer((previous) =>
+          `${previous} ${finalTranscript}`.trim()
+        )
+      }
+
+      if (interimTranscript) {
+        setMessage(
+          `🎤 Listening... ${interimTranscript}`
+        )
+      }
+    }
+
+    recognition.onerror = (event) => {
+      console.error(
+        'Speech recognition error:',
+        event.error
+      )
+
+      setIsListening(false)
+
+      if (event.error === 'not-allowed') {
+        setMessage(
+          '⚠️ Microphone permission was denied. Please allow microphone access in your browser.'
+        )
+      } else if (event.error === 'no-speech') {
+        setMessage(
+          '⚠️ No speech detected. Please try speaking again.'
+        )
+      } else {
+        setMessage(
+          `⚠️ Microphone error: ${event.error}`
+        )
+      }
+    }
+
+    recognition.onend = () => {
+      setIsListening(false)
+    }
+
+    recognitionRef.current = recognition
+
+    return () => {
+      try {
+        recognition.stop()
+      } catch {
+        // Recognition may already be stopped.
+      }
+    }
+  }, [])
+
+  // ==========================================
+  // START SPEAKING
+  // ==========================================
+
+  const startSpeaking = () => {
+    if (!speechSupported) {
+      setMessage(
+        '⚠️ Your browser does not support speech recognition. Please use Google Chrome or Microsoft Edge.'
+      )
+      return
+    }
+
+    if (!recognitionRef.current) {
+      setMessage(
+        '⚠️ Speech recognition is not available.'
+      )
+      return
+    }
+
+    setSpokenAnswer('')
+    setMessage('🎤 Starting microphone...')
+
+    try {
+      recognitionRef.current.start()
+    } catch (error) {
+      console.log('Speech recognition start:', error)
+
+      setMessage(
+        '⚠️ Microphone is already active. Please continue speaking.'
+      )
+    }
+  }
+
+  // ==========================================
+  // STOP SPEAKING
+  // ==========================================
+
+  const stopSpeaking = () => {
+    if (!recognitionRef.current) {
+      return
+    }
+
+    try {
+      recognitionRef.current.stop()
+    } catch {
+      // Recognition may already be stopped.
+    }
+
+    setIsListening(false)
+
+    setMessage(
+      '✅ Your spoken answer has been captured.'
+    )
+  }
+
+  // ==========================================
+  // CLEAR SPOKEN ANSWER
+  // ==========================================
+
+  const clearSpokenAnswer = () => {
+    setSpokenAnswer('')
+    setMessage('')
+  }
 
   // ==========================================
   // SIGNUP
@@ -127,21 +324,30 @@ function App() {
 
       const data = await getResponseData(response)
 
+      console.log('SIGNUP STATUS:', response.status)
+      console.log('SIGNUP DATA:', data)
+
       if (response.ok) {
-        setMessage('✅ Account created successfully! Please login.')
+        setMessage(
+          '✅ Account created successfully! Please login.'
+        )
+
         setAuthMode('login')
         setPassword('')
         return
       }
 
       if (response.status === 409) {
-        setMessage('⚠️ This email is already registered. Please login.')
+        setMessage(
+          '⚠️ This email is already registered. Please login.'
+        )
+
         setAuthMode('login')
         return
       }
 
       setMessage(
-        `❌ Signup failed${data?.detail ? `: ${data.detail}` : '.'}`
+        `❌ Signup failed: ${getErrorMessage(data)}`
       )
     } catch (error) {
       console.error('Signup error:', error)
@@ -206,7 +412,6 @@ function App() {
         setPassword('')
         setMessage('✅ Login successful!')
         setPage('profile')
-
         return
       }
 
@@ -215,7 +420,9 @@ function App() {
 
         setMessage(
           `❌ Invalid email or password${
-            data?.detail ? `: ${data.detail}` : ''
+            data?.detail
+              ? `: ${getErrorMessage(data)}`
+              : ''
           }`
         )
 
@@ -223,7 +430,7 @@ function App() {
       }
 
       setMessage(
-        `❌ Login failed${data?.detail ? `: ${data.detail}` : '.'}`
+        `❌ Login failed: ${getErrorMessage(data)}`
       )
     } catch (error) {
       console.error('LOGIN ERROR:', error)
@@ -290,14 +497,11 @@ function App() {
         setPassword('')
         setAuthMode('login')
         setPage('auth')
-
         return
       }
 
       setMessage(
-        `❌ Could not create profile${
-          data?.detail ? `: ${data.detail}` : '.'
-        }`
+        `❌ Could not create profile: ${getErrorMessage(data)}`
       )
     } catch (error) {
       console.error('PROFILE ERROR:', error)
@@ -324,6 +528,14 @@ function App() {
       console.log('Logout error:', error)
     }
 
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop()
+      } catch {
+        // Already stopped.
+      }
+    }
+
     setLoggedIn(false)
     setPassword('')
     setMessage('You have been logged out.')
@@ -337,7 +549,9 @@ function App() {
   const requireLogin = (targetPage) => {
     if (!loggedIn) {
       setAuthMode('login')
-      setMessage('⚠️ Please login first to use this feature.')
+      setMessage(
+        '⚠️ Please login first to use this feature.'
+      )
       setPage('auth')
       return
     }
@@ -372,7 +586,12 @@ function App() {
       title: 'Data Science Intern',
       company: 'Data Analytics Company',
       location: 'Bangalore',
-      skills: ['python', 'machine learning', 'sql', 'pandas'],
+      skills: [
+        'python',
+        'machine learning',
+        'sql',
+        'pandas',
+      ],
       icon: '📊',
     },
     {
@@ -380,7 +599,12 @@ function App() {
       title: 'Frontend Developer Intern',
       company: 'Technology Startup',
       location: 'Hyderabad',
-      skills: ['javascript', 'react', 'html', 'css'],
+      skills: [
+        'javascript',
+        'react',
+        'html',
+        'css',
+      ],
       icon: '🌐',
     },
     {
@@ -388,7 +612,11 @@ function App() {
       title: 'AI Intern',
       company: 'Artificial Intelligence Company',
       location: 'Bangalore',
-      skills: ['python', 'machine learning', 'artificial intelligence'],
+      skills: [
+        'python',
+        'machine learning',
+        'artificial intelligence',
+      ],
       icon: '🧠',
     },
   ]
@@ -398,24 +626,28 @@ function App() {
       skill.toLowerCase()
     )
 
-    const preferredLocation = location.trim().toLowerCase()
+    const preferredLocation =
+      location.trim().toLowerCase()
 
     const scored = internshipData.map((job) => {
       let score = 0
 
-      const matchingSkills = job.skills.filter((jobSkill) =>
-        userSkills.some(
-          (userSkill) =>
-            userSkill.includes(jobSkill) ||
-            jobSkill.includes(userSkill)
-        )
+      const matchingSkills = job.skills.filter(
+        (jobSkill) =>
+          userSkills.some(
+            (userSkill) =>
+              userSkill.includes(jobSkill) ||
+              jobSkill.includes(userSkill)
+          )
       )
 
       score += matchingSkills.length * 20
 
       if (
         preferredLocation &&
-        job.location.toLowerCase().includes(preferredLocation)
+        job.location
+          .toLowerCase()
+          .includes(preferredLocation)
       ) {
         score += 30
       }
@@ -427,7 +659,9 @@ function App() {
       }
     })
 
-    return scored.sort((a, b) => b.score - a.score)
+    return scored.sort(
+      (a, b) => b.score - a.score
+    )
   }, [skills, location])
 
   // ==========================================
@@ -444,8 +678,8 @@ function App() {
     'Problem Solving',
   ]
 
-  const currentSkillsLower = getSkillsArray().map((skill) =>
-    skill.toLowerCase()
+  const currentSkillsLower = getSkillsArray().map(
+    (skill) => skill.toLowerCase()
   )
 
   const skillGaps = recommendedSkills.filter(
@@ -533,20 +767,30 @@ function App() {
 
   const currentQuestion =
     currentInterviewQuestions.length > 0
-      ? currentInterviewQuestions[interviewIndex %
-          currentInterviewQuestions.length]
+      ? currentInterviewQuestions[
+          interviewIndex %
+            currentInterviewQuestions.length
+        ]
       : null
 
   const startInterview = (type) => {
     setSelectedInterviewType(type)
     setInterviewIndex(0)
+    setSpokenAnswer('')
+    setIsListening(false)
     setMessage('')
   }
 
   const nextInterviewQuestion = () => {
     if (!selectedInterviewType) {
-      setMessage('⚠️ Please select an interview category first.')
+      setMessage(
+        '⚠️ Please select an interview category first.'
+      )
       return
+    }
+
+    if (isListening) {
+      stopSpeaking()
     }
 
     setInterviewIndex(
@@ -555,6 +799,7 @@ function App() {
         interviewQuestions[selectedInterviewType].length
     )
 
+    setSpokenAnswer('')
     setMessage('')
   }
 
@@ -683,7 +928,9 @@ function App() {
                     }
                   }}
                 >
-                  {loggedIn ? 'Create My Profile' : 'Get Started'}
+                  {loggedIn
+                    ? 'Create My Profile'
+                    : 'Get Started'}
                 </button>
 
                 <button
@@ -781,7 +1028,9 @@ function App() {
                     type="text"
                     placeholder="Enter your name"
                     value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    onChange={(e) =>
+                      setName(e.target.value)
+                    }
                     required
                   />
 
@@ -796,7 +1045,9 @@ function App() {
                   type="email"
                   placeholder="Enter your email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) =>
+                    setEmail(e.target.value)
+                  }
                   required
                 />
 
@@ -810,7 +1061,9 @@ function App() {
                   type="password"
                   placeholder="Enter your password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) =>
+                    setPassword(e.target.value)
+                  }
                   required
                 />
 
@@ -887,6 +1140,7 @@ function App() {
                   Don't have an account?{' '}
 
                   <button
+                    type="button"
                     onClick={() => {
                       setAuthMode('signup')
                       setMessage('')
@@ -901,6 +1155,7 @@ function App() {
                   Already have an account?{' '}
 
                   <button
+                    type="button"
                     onClick={() => {
                       setAuthMode('login')
                       setMessage('')
@@ -980,7 +1235,9 @@ function App() {
                     <input
                       type="text"
                       value={name}
-                      onChange={(e) => setName(e.target.value)}
+                      onChange={(e) =>
+                        setName(e.target.value)
+                      }
                       required
                     />
 
@@ -993,7 +1250,9 @@ function App() {
                     <input
                       type="email"
                       value={email}
-                      onChange={(e) => setEmail(e.target.value)}
+                      onChange={(e) =>
+                        setEmail(e.target.value)
+                      }
                       required
                     />
 
@@ -1010,7 +1269,9 @@ function App() {
                   <input
                     type="text"
                     value={location}
-                    onChange={(e) => setLocation(e.target.value)}
+                    onChange={(e) =>
+                      setLocation(e.target.value)
+                    }
                     required
                   />
 
@@ -1018,14 +1279,14 @@ function App() {
 
                 <div className="form-group">
 
-                  <label>
-                    Skills
-                  </label>
+                  <label>Skills</label>
 
                   <input
                     type="text"
                     value={skills}
-                    onChange={(e) => setSkills(e.target.value)}
+                    onChange={(e) =>
+                      setSkills(e.target.value)
+                    }
                     required
                   />
 
@@ -1040,7 +1301,9 @@ function App() {
                   className="primary-btn submit-btn"
                   disabled={loading}
                 >
-                  {loading ? 'Saving...' : 'Create Profile'}
+                  {loading
+                    ? 'Saving...'
+                    : 'Create Profile'}
                 </button>
 
                 {message && (
@@ -1088,9 +1351,7 @@ function App() {
               >
                 <div className="feature-icon">🎯</div>
 
-                <h3>
-                  Internship Matching
-                </h3>
+                <h3>Internship Matching</h3>
 
                 <p>
                   Find internship opportunities based on
@@ -1098,6 +1359,7 @@ function App() {
                 </p>
 
                 <button
+                  type="button"
                   className="secondary-btn"
                   onClick={(e) => {
                     e.stopPropagation()
@@ -1115,9 +1377,7 @@ function App() {
               >
                 <div className="feature-icon">📄</div>
 
-                <h3>
-                  Resume Analysis
-                </h3>
+                <h3>Resume Analysis</h3>
 
                 <p>
                   Upload your resume and get useful
@@ -1125,6 +1385,7 @@ function App() {
                 </p>
 
                 <button
+                  type="button"
                   className="secondary-btn"
                   onClick={(e) => {
                     e.stopPropagation()
@@ -1142,9 +1403,7 @@ function App() {
               >
                 <div className="feature-icon">📊</div>
 
-                <h3>
-                  Skill Gap Analysis
-                </h3>
+                <h3>Skill Gap Analysis</h3>
 
                 <p>
                   Identify skills you need to improve
@@ -1152,6 +1411,7 @@ function App() {
                 </p>
 
                 <button
+                  type="button"
                   className="secondary-btn"
                   onClick={(e) => {
                     e.stopPropagation()
@@ -1169,16 +1429,15 @@ function App() {
               >
                 <div className="feature-icon">🎤</div>
 
-                <h3>
-                  Interview Preparation
-                </h3>
+                <h3>Interview Preparation</h3>
 
                 <p>
                   Practice technical and behavioral
-                  interview questions.
+                  interview questions using your voice.
                 </p>
 
                 <button
+                  type="button"
                   className="secondary-btn"
                   onClick={(e) => {
                     e.stopPropagation()
@@ -1228,21 +1487,16 @@ function App() {
                     {job.icon}
                   </div>
 
-                  <h3>
-                    {job.title}
-                  </h3>
+                  <h3>{job.title}</h3>
 
-                  <p>
-                    {job.company}
-                  </p>
+                  <p>{job.company}</p>
 
-                  <p>
-                    📍 {job.location}
-                  </p>
+                  <p>📍 {job.location}</p>
 
                   <p>
                     <strong>
-                      Match Score: {Math.min(job.score, 100)}%
+                      Match Score:{' '}
+                      {Math.min(job.score, 100)}%
                     </strong>
                   </p>
 
@@ -1259,6 +1513,7 @@ function App() {
             </div>
 
             <button
+              type="button"
               className="primary-btn"
               onClick={() => goTo('jobs')}
             >
@@ -1320,6 +1575,7 @@ function App() {
               )}
 
               <button
+                type="button"
                 className="primary-btn submit-btn"
                 onClick={analyzeResume}
               >
@@ -1336,60 +1592,43 @@ function App() {
                 <div className="feature-grid">
 
                   <div className="feature-card">
+                    <div className="feature-icon">📄</div>
 
-                    <div className="feature-icon">
-                      📄
-                    </div>
-
-                    <h3>
-                      Resume Status
-                    </h3>
+                    <h3>Resume Status</h3>
 
                     <p>
                       Resume selected successfully.
                     </p>
-
                   </div>
 
                   <div className="feature-card">
+                    <div className="feature-icon">💡</div>
 
-                    <div className="feature-icon">
-                      💡
-                    </div>
-
-                    <h3>
-                      Skills to Highlight
-                    </h3>
+                    <h3>Skills to Highlight</h3>
 
                     <p>
                       {skills ||
                         'Add skills to your profile for personalized suggestions.'}
                     </p>
-
                   </div>
 
                   <div className="feature-card">
+                    <div className="feature-icon">🎯</div>
 
-                    <div className="feature-icon">
-                      🎯
-                    </div>
-
-                    <h3>
-                      Improvement Areas
-                    </h3>
+                    <h3>Improvement Areas</h3>
 
                     <p>
                       Consider highlighting projects,
                       internships, technical skills and
                       measurable achievements.
                     </p>
-
                   </div>
 
                 </div>
               )}
 
               <button
+                type="button"
                 className="secondary-btn"
                 onClick={() => goTo('jobs')}
               >
@@ -1426,30 +1665,19 @@ function App() {
             <div className="feature-grid">
 
               <div className="feature-card">
+                <div className="feature-icon">✅</div>
 
-                <div className="feature-icon">
-                  ✅
-                </div>
-
-                <h3>
-                  Your Current Skills
-                </h3>
+                <h3>Your Current Skills</h3>
 
                 <p>
                   {skills || 'No skills added yet.'}
                 </p>
-
               </div>
 
               <div className="feature-card">
+                <div className="feature-icon">📚</div>
 
-                <div className="feature-icon">
-                  📚
-                </div>
-
-                <h3>
-                  Skills You Already Have
-                </h3>
+                <h3>Skills You Already Have</h3>
 
                 <p>
                   {recommendedSkills
@@ -1460,30 +1688,24 @@ function App() {
                     .join(', ') ||
                     'No recommended skills matched yet.'}
                 </p>
-
               </div>
 
               <div className="feature-card">
+                <div className="feature-icon">⚠️</div>
 
-                <div className="feature-icon">
-                  ⚠️
-                </div>
-
-                <h3>
-                  Skills to Improve
-                </h3>
+                <h3>Skills to Improve</h3>
 
                 <p>
                   {skillGaps.length > 0
                     ? skillGaps.join(', ')
                     : 'Excellent! No major skill gaps detected.'}
                 </p>
-
               </div>
 
             </div>
 
             <button
+              type="button"
               className="secondary-btn"
               onClick={() => goTo('jobs')}
             >
@@ -1493,7 +1715,9 @@ function App() {
           </section>
         )}
 
-        {/* INTERVIEW */}
+        {/* ==========================================
+            ORAL INTERVIEW
+            ========================================== */}
 
         {page === 'interview' && (
           <section className="profile-section">
@@ -1509,8 +1733,8 @@ function App() {
               </h2>
 
               <p>
-                Select an interview category and
-                start practicing.
+                Select a category and answer interview
+                questions using your microphone.
               </p>
 
             </div>
@@ -1532,7 +1756,7 @@ function App() {
                   </div>
 
                   <h3>
-                    Technical Question
+                    Technical Questions
                   </h3>
 
                   <p>
@@ -1540,7 +1764,10 @@ function App() {
                     interview questions.
                   </p>
 
-                  <button className="secondary-btn">
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                  >
                     Practice Technical
                   </button>
 
@@ -1567,7 +1794,10 @@ function App() {
                     interview questions.
                   </p>
 
-                  <button className="secondary-btn">
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                  >
                     Practice ML
                   </button>
 
@@ -1586,7 +1816,7 @@ function App() {
                   </div>
 
                   <h3>
-                    Behavioral Question
+                    Behavioral Questions
                   </h3>
 
                   <p>
@@ -1594,7 +1824,10 @@ function App() {
                     interview questions.
                   </p>
 
-                  <button className="secondary-btn">
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                  >
                     Practice Behavioral
                   </button>
 
@@ -1610,10 +1843,12 @@ function App() {
                   {selectedInterviewType} Interview
                 </h2>
 
+                {/* QUESTION */}
+
                 <div className="feature-card">
 
                   <div className="feature-icon">
-                    🎤
+                    ❓
                   </div>
 
                   <h3>
@@ -1625,6 +1860,103 @@ function App() {
                   </p>
 
                 </div>
+
+                {/* MICROPHONE */}
+
+                <div className="feature-card">
+
+                  <div className="feature-icon">
+                    🎤
+                  </div>
+
+                  <h3>
+                    Your Oral Answer
+                  </h3>
+
+                  {!speechSupported ? (
+
+                    <p>
+                      ⚠️ Speech recognition is not supported
+                      by this browser. Please use Google Chrome
+                      or Microsoft Edge.
+                    </p>
+
+                  ) : (
+
+                    <>
+                      <p>
+                        {isListening
+                          ? '🔴 Listening... Speak your answer now.'
+                          : 'Click the microphone button and answer the question aloud.'}
+                      </p>
+
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: '12px',
+                          flexWrap: 'wrap',
+                          marginTop: '15px',
+                        }}
+                      >
+
+                        {!isListening ? (
+
+                          <button
+                            type="button"
+                            className="primary-btn"
+                            onClick={startSpeaking}
+                          >
+                            🎤 Start Speaking
+                          </button>
+
+                        ) : (
+
+                          <button
+                            type="button"
+                            className="primary-btn"
+                            onClick={stopSpeaking}
+                          >
+                            ⏹️ Stop Speaking
+                          </button>
+
+                        )}
+
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={clearSpokenAnswer}
+                        >
+                          🗑️ Clear Answer
+                        </button>
+
+                      </div>
+
+                    </>
+                  )}
+
+                </div>
+
+                {/* SPOKEN ANSWER */}
+
+                {spokenAnswer && (
+                  <div className="feature-card">
+
+                    <div className="feature-icon">
+                      📝
+                    </div>
+
+                    <h3>
+                      Your Answer
+                    </h3>
+
+                    <p>
+                      {spokenAnswer}
+                    </p>
+
+                  </div>
+                )}
+
+                {/* SUGGESTED ANSWER */}
 
                 <div className="feature-card">
 
@@ -1638,18 +1970,30 @@ function App() {
 
                 </div>
 
+                {/* NEXT */}
+
                 <button
+                  type="button"
                   className="primary-btn"
                   onClick={nextInterviewQuestion}
                 >
                   Next Question →
                 </button>
 
+                {/* CATEGORY */}
+
                 <button
+                  type="button"
                   className="secondary-btn"
                   onClick={() => {
+                    if (isListening) {
+                      stopSpeaking()
+                    }
+
                     setSelectedInterviewType(null)
                     setInterviewIndex(0)
+                    setSpokenAnswer('')
+                    setMessage('')
                   }}
                 >
                   Choose Another Category
@@ -1668,8 +2012,17 @@ function App() {
             <br />
 
             <button
+              type="button"
               className="secondary-btn"
-              onClick={() => goTo('jobs')}
+              onClick={() => {
+                if (isListening) {
+                  stopSpeaking()
+                }
+
+                setSelectedInterviewType(null)
+                setSpokenAnswer('')
+                goTo('jobs')
+              }}
             >
               ← Back to Features
             </button>
